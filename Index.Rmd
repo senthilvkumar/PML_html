@@ -1,0 +1,157 @@
+---
+output: html_document
+---
+## Practical Machine Learning - Course Project
+
+### by Senthil Kumar V.
+
+### Background, Data & Goal
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+The training data for this project are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We may use any of the other variables to predict with. This report describes how the model was built, how it was cross validated, the expected out of sample error etc. This model was used to predict 20 different test cases and the results were submitted online separately.
+
+### Data Pre-processing
+
+Load the training and testing data set and check their dimensions.
+
+```{r}
+trainingDat <- read.csv("pml-training.csv", na.strings=c("NA", "", "NULL"))
+dim(trainingDat)
+testingDat <- read.csv("pml-testing.csv", na.strings=c("NA", "", "NULL"))
+dim(testingDat)
+```
+
+Ignore the variables with NA values as also the irrelevant variables like user name etc. from further analysis.
+
+```{r}
+training.noNA <- trainingDat[ , colSums(is.na(trainingDat)) == 0]
+dim(training.noNA)
+
+unwanted <- c('X', 'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2', 'cvtd_timestamp', 'new_window', 'num_window')
+training.trim <- training.noNA[, -which(names(training.noNA) %in% unwanted)]
+dim(training.trim)
+```
+
+Remove the variables with near zero variance.
+
+```{r, results="hide"}
+library(caret)
+```
+
+```{r}
+zeroVar <- nearZeroVar(training.trim[sapply(training.trim, is.numeric)], saveMetrics = TRUE)
+training.nzv <- training.trim[,zeroVar[, 'nzv']==0]
+dim(training.nzv)
+```
+
+Remove the variables that are highly correlated with each other.
+
+```{r}
+corrMat <- cor(na.omit(training.nzv[sapply(training.nzv, is.numeric)]))
+dim(corrMat)
+
+corrDat <- expand.grid(row = 1:52, col = 1:52)
+corrDat$correlation <- as.vector(corrMat)
+levelplot(correlation ~ row+ col, corrDat)
+```
+
+```{r, results="hide"}
+rmcor <- findCorrelation(corrMat, cutoff = .90, verbose = TRUE)
+```
+
+```{r}
+training.fin <- training.nzv[,-rmcor]
+dim(training.fin)
+```
+
+For cross validation sake, split the data into training and testing data sets.
+
+```{r}
+train.list <- createDataPartition(y=training.fin$classe, p=0.6, list=FALSE)
+train.dat <- training.fin[train.list,] 
+test.dat <- training.fin[-train.list,]
+dim(train.dat)
+dim(test.dat)
+```
+
+### Data Analysis - Regression Tree & Random Forest models.
+
+Fit a regression tree and plot it.
+
+```{r}
+library(tree)
+set.seed(123456)
+tree.train <- tree(classe~.,data=train.dat)
+summary(tree.train)
+```
+
+```{r, fig.width=10, fig.height=10}
+plot(tree.train)
+text(tree.train,pretty=0, cex =.8)
+```
+
+Cross validate the above tree with the testing data.
+
+```{r}
+tree.pred <- predict(tree.train,test.dat,type="class")
+predMat <- with(test.dat,table(tree.pred,classe))
+sum(diag(predMat))/sum(as.vector(predMat))
+```
+
+The above tree probably has too much of variance. Hence the tree will be pruned using cross validation as detailed below.
+
+```{r}
+cv.train <- cv.tree(tree.train,FUN=prune.misclass)
+cv.train
+
+plot(cv.train)
+
+prune.train <- prune.misclass(tree.train,best=15)
+
+tree.pred <- predict(prune.train,test.dat,type="class")
+predMat <- with(test.dat,table(tree.pred,classe))
+sum(diag(predMat))/sum(as.vector(predMat))
+```
+
+The above result shows that the model has become simpler due to pruning while retaining almost earlier accuracy. A shallower tree is easier to interpret but often has a lower accuracy. To improve the accuracy we will construct random forest model wherein many individual trees are built and averaged out to reduce the variance and enhance the accuracy.
+
+
+```{r, results="hide"}
+require(randomForest)
+```
+
+```{r}
+set.seed(123456)
+rf.train <- randomForest(classe~.,data=train.dat, ntree=100, importance=TRUE)
+rf.train
+```
+
+The variables of high importance are shown in the plots below.
+
+```{r, fig.width=8, fig.height=8}
+varImpPlot(rf.train,)
+```
+
+Now we apply this random forest model on the test data and compute the out of sample accuracy.
+
+```{r}
+tree.pred <- predict(rf.train,test.dat,type="class")
+predMat <- with(test.dat,table(tree.pred,classe))
+sum(diag(predMat))/sum(as.vector(predMat))
+```
+
+The above result shows that the random forest model is quite accurate. The predictions from this model were submitted online for the prediction assignment as illustrated below.
+
+```{r}
+answers <- predict(rf.train, testingDat)
+answers
+```
+
+
